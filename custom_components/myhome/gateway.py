@@ -169,14 +169,28 @@ class MyHOMEGatewayHandler:
                             self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][SENSOR][message.entity][CONF_ENTITIES][_entity],
                             MyHOMEEntity,
                         ):
-                            self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][SENSOR][message.entity][CONF_ENTITIES][_entity].handle_event(message)
+                            try:
+                                self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][SENSOR][message.entity][CONF_ENTITIES][_entity].handle_event(message)
+                            except:
+                                LOGGER.error(
+                                    "%s Error handling sensor event `%s`",
+                                    self.log_id,
+                                    message,
+                                )
                 elif BINARY_SENSOR in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS] and message.entity in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][BINARY_SENSOR]:
                     for _entity in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][BINARY_SENSOR][message.entity][CONF_ENTITIES]:
                         if isinstance(
                             self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][BINARY_SENSOR][message.entity][CONF_ENTITIES][_entity],
                             MyHOMEEntity,
                         ):
-                            self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][BINARY_SENSOR][message.entity][CONF_ENTITIES][_entity].handle_event(message)
+                            try:
+                                self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][BINARY_SENSOR][message.entity][CONF_ENTITIES][_entity].handle_event(message)
+                            except:
+                                LOGGER.error(
+                                    "%s Error handling binary sensor event `%s`",
+                                    self.log_id,
+                                    message,
+                                )
                 else:
                     continue
             elif (
@@ -269,7 +283,7 @@ class MyHOMEGatewayHandler:
                             )
                     if not is_event:
                         if isinstance(message, OWNLightingEvent) and message.brightness_preset:
-                            if isinstance(
+                            if message.entity in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][LIGHT] and isinstance(
                                 self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][LIGHT][message.entity][CONF_ENTITIES][LIGHT],
                                 MyHOMEEntity,
                             ):
@@ -292,7 +306,14 @@ class MyHOMEGatewayHandler:
                                                 EnableCommandButtonEntity,
                                             )
                                         ):
-                                            self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][_platform][message.entity][CONF_ENTITIES][_entity].handle_event(message)
+                                            try:
+                                                self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][_platform][message.entity][CONF_ENTITIES][_entity].handle_event(message)
+                                            except:
+                                                LOGGER.error(
+                                                    "%s Error handling event `%s`",
+                                                    self.log_id,
+                                                    message,
+                                                )
 
                 else:
                     LOGGER.debug(
