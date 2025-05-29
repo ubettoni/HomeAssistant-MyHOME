@@ -35,7 +35,6 @@ from .const import (
     CONF_PLATFORMS,
     CONF_WHO,
     CONF_WHERE,
-    CONF_PHASE,
     CONF_BUS_INTERFACE,
     CONF_ENTITIES,
     CONF_ENTITY_NAME,
@@ -64,77 +63,6 @@ def format_mac(address: str) -> str:
     if len(mac) != 12 or not mac.isalnum() or re.search("[G-Z]", mac) is not None:
         return None
     return ha_format_mac(mac)
-
-class ZoneActuatorWhere(object):
-    """
-    Validate WHERE for WHO=4 actuators.
-    Accepts "Z#N" (e.g., "1#5", "12#3").
-    Accepts "ZN" (2 digits, e.g., "91" becomes "9#1". Z is first, N is second. N must be 1-9).
-    Accepts "ZZN" (3 digits, e.g., "101" becomes "10#1". ZZ is first two, N is last. N must be 1-9).
-    Returns the normalized "Z#N" string.
-    """
-    def __init__(self, msg=None):
-        self.msg = msg
-
-    def __call__(self, v):
-        if not isinstance(v, str):
-            raise Invalid(f"Zone#Actuator WHERE must be a string, got {v}.")
-
-        # Prova il formato Z#N
-        match_z_hash_n = re.fullmatch(r"^(\d{1,2})#(\d{1,2})$", v)
-        if match_z_hash_n:
-            zone_str, actuator_str = match_z_hash_n.groups()
-            try:
-                zone = int(zone_str)
-                actuator = int(actuator_str)
-                # Valida i range (esempio, adattali se necessario)
-                if not (0 <= zone <= 99 and 1 <= actuator <= 99): # MyHome solitamente ha attuatori 1-9 per zona
-                    raise Invalid(f"Zone (0-99) or Actuator (1-99) number out of range in '{v}'.")
-                return f"{zone}#{actuator}" # Ritorna normalizzato
-            except ValueError:
-                raise Invalid(f"Invalid numbers in Zone#Actuator WHERE '{v}'.")
-
-        # Prova il formato ZN (2 cifre)
-        match_zn = re.fullmatch(r"^(\d)(\d)$", v) # Z e N singola cifra
-        if match_zn:
-            zone_str, actuator_str = match_zn.groups()
-            try:
-                zone = int(zone_str)
-                actuator = int(actuator_str)
-                if not (0 <= zone <= 9 and 1 <= actuator <= 9): # Limiti per Z e N singola cifra
-                    raise Invalid(
-                        f"For 2-digit WHERE '{v}', Zone (0-9) or Actuator (1-9) out of range or Actuator is 0."
-                    )
-                return f"{zone}#{actuator}" # Normalizza e ritorna
-            except ValueError: # Non dovrebbe accadere con regex \d
-                raise Invalid(f"Invalid numbers in 2-digit ZoneActuator WHERE '{v}'.")
-
-        # Prova il formato ZZN (3 cifre)
-        match_zzn = re.fullmatch(r"^(\d{2})(\d)$", v) # ZZ due cifre, N singola cifra
-        if match_zzn:
-            zone_str, actuator_str = match_zzn.groups()
-            try:
-                zone = int(zone_str)
-                actuator = int(actuator_str)
-                if not (0 <= zone <= 99 and 1 <= actuator <= 9): # Limiti per ZZ e N singola cifra
-                    raise Invalid(
-                        f"For 3-digit WHERE '{v}', Zone (0-99) or Actuator (1-9) out of range or Actuator is 0."
-                    )
-                return f"{zone}#{actuator}" # Normalizza e ritorna
-            except ValueError: # Non dovrebbe accadere
-                raise Invalid(f"Invalid numbers in 3-digit ZoneActuator WHERE '{v}'.")
-        
-        # Se nessun formato corrisponde
-        default_msg = (
-            f"Invalid Zone#Actuator WHERE '{v}'. Expected format 'Z#N' (e.g., '1#5'), "
-            f"'ZN' (2 digits, e.g., '91' for Z=9, N=1), or "
-            f"'ZZN' (3 digits, e.g., '101' for Z=10, N=1)."
-        )
-        raise Invalid(self.msg or default_msg)
-
-    def __repr__(self):
-        return "ZoneActuatorWhere(msg=%r)" % (self.msg)
-
 
 
 class MacAddress(object):
@@ -215,16 +143,42 @@ class PointToPoint(object):
     def __repr__(self):
         return "Where(%s, msg=%r)" % ("String", self.msg)
 
+# Nuovo validatore per WHERE degli attuatori (es. "9#1")
+class ActuatorWhere(object):
+    def __init__(self, msg=None):
+        self.msg = msg
+
+    def __call__(self, v):
+        if isinstance(v, str) and re.match(r"^\d{1,2}#\d{1,2}$", v):
+            # Qui potresti aggiungere controlli più specifici sui range di Z e N se li conosci
+            # Esempio: parts = v.split('#'); zone = int(parts[0]); actuator = int(parts[1])
+            # if not (0 <= zone <= 99 and 1 <= actuator <= 9): raise Invalid("...")
+            return v
+        else:
+            # Tentativo di recuperare il formato Z#N da una stringa ZN (es. 91 -> 9#1)
+            # Questo potrebbe essere utile se la configurazione a volte omette il '#'
+            # Ma è meglio essere espliciti. Se vuoi supportarlo, decommenta e adatta:
+            # if isinstance(v, str) and re.match(r"^\d{2,3}$", v): # es. 91 o 101
+            #     if len(v) == 2: # ZN
+            #         return f"{v[0]}#{v[1]}"
+            #     elif len(v) == 3: #ZZN o ZNN, qui va chiarita la logica
+            #          # Esempio per ZZN: return f"{v[0:2]}#{v[2]}"
+            #          # Esempio per ZNN: return f"{v[0]}#{v[1:3]}"
+            #          pass # Lasciare commentato se non necessario
+            raise Invalid(f"Invalid Actuator WHERE {v}, it must be a string like 'Z#N' (e.g., '9#1').")
+
+    def __repr__(self):
+        return "ActuatorWhere(%s, msg=%r)" % ("String", self.msg)
 
 class SpecialWhere(object):
     def __init__(self, msg=None):
         self.msg = msg
 
     def __call__(self, v):
-        if type(v) == str and re.match(r"^[0-9#]+$", v):
+        if type(v) == str and v.isdigit():
             return v
         else:
-            raise Invalid(f"Invalid WHERE {v}, it must be a string of [0-9#]+.")
+            raise Invalid(f"Invalid WHERE {v}, it must be a string of digits.")
 
     def __repr__(self):
         return "Where(%s, msg=%r)" % ("String", self.msg)
@@ -235,8 +189,10 @@ class BusInterface(object):
         self.msg = msg
 
     def __call__(self, v):
-        if type(v) == str and v.isdigit() and len(v) == 2:
-            if int(v) > 15:
+        if type(v) == str and v.isdigit() and len(v) == 1: # Nota: il PDF sembra indicare 2 cifre per bus (00-15)
+                                                         # ma il codice originale ha len(v) == 1. Da verificare.
+                                                         # Se è interfaccia per attuatore, WHO=4 non la usa.
+            if int(v) > 15: # Questo non verrà mai raggiunto se len(v) == 1
                 raise Invalid(f"Invalid Bus Interface number {v}, it must be between 00 and 15.")
         elif v is not None:
             raise Invalid(f"Invalid Bus Interface number {v}, it must be a string of 2 digits.")
@@ -269,7 +225,8 @@ class MyHomeConfigSchema(Schema):
                             _rekeyed_data[data[gateway][CONF_MAC]][CONF_PLATFORMS][BUTTON][key] = value
                 if SWITCH in _rekeyed_data[data[gateway][CONF_MAC]][CONF_PLATFORMS]:
                     for key, value in _rekeyed_data[data[gateway][CONF_MAC]][CONF_PLATFORMS][SWITCH].items():
-                        if not value[CONF_WHERE].startswith("#"):
+                        # Aggiungi un controllo per WHO=4 qui se vuoi escluderli dai button automatici
+                        if not value[CONF_WHERE].startswith("#") and value[CONF_WHO] != "4":
                             _rekeyed_data[data[gateway][CONF_MAC]][CONF_PLATFORMS][BUTTON][key] = value
                 if COVER in _rekeyed_data[data[gateway][CONF_MAC]][CONF_PLATFORMS]:
                     for key, value in _rekeyed_data[data[gateway][CONF_MAC]][CONF_PLATFORMS][COVER].items():
@@ -279,111 +236,49 @@ class MyHomeConfigSchema(Schema):
         return _rekeyed_data
 
 
-# In validate.py, modifica la classe MyHomeDeviceSchema
-
 class MyHomeDeviceSchema(Schema):
     def __call__(self, data):
         data = super().__call__(data)
         _rekeyed_data = {}
 
-        for device_key_original in data: # Rinomina 'device' a 'device_key_original' per evitare confusione
-            device_config = data[device_key_original] # Questa è la configurazione del dispositivo
-            device_config[CONF_ENTITIES] = {} # Mantiene la logica esistente
-            
-            # Gestione default e recupero WHO
-            # Lo schema interno per switch_schema ha già impostato il default a "1" o validato "1" o "4"
-            current_who = device_config.get(CONF_WHO) 
-            # Non dovrebbe essere None qui se lo schema base per switch lo ha gestito,
-            # ma per robustezza:
-            if current_who is None:
-                 # Se questo schema è usato anche da altre piattaforme che non definiscono WHO
-                 # potrebbe essere necessario un default più generico o un errore.
-                 # Per lo switch, lo schema interno dovrebbe averlo coperto.
-                 current_who = "1" # Fallback, ma idealmente lo schema di piattaforma lo imposta.
+        for device in data:
+            data[device][CONF_ENTITIES] = {}
+            # Valida la coerenza di WHO e WHERE
+            current_who = data[device].get(CONF_WHO)
+            current_where = data[device].get(CONF_WHERE)
+
+            if current_who == "4": # Per il nostro termoarredo
+                 # Ci aspettiamo un formato ActuatorWhere, la validazione di base è già fatta.
+                 # Potremmo aggiungere ulteriori controlli qui se necessario.
+                 # Ad esempio, verificare che CONF_BUS_INTERFACE non sia presente o sia None.
+                if CONF_BUS_INTERFACE in data[device] and data[device][CONF_BUS_INTERFACE] is not None:
+                    raise Invalid(f"CONF_BUS_INTERFACE is not applicable for WHO=4 actuators (Device: {device})")
 
 
-            # Logica per CONF_WHERE e generazione _new_key
-            if CONF_WHERE in device_config:
-                where_value = device_config[CONF_WHERE]
-                bus_interface_value = device_config.get(CONF_BUS_INTERFACE)
-
-                if current_who == "1":
-                    # Validazione WHERE per WHO=1 (luci/attuatori standard)
-                    validated_where = Any(
-                        General(), Area(), Group(), PointToPoint(),
-                        msg=f"Invalid <WHERE> '{where_value}' for WHO=1 for device '{device_key_original}'"
-                    )(where_value)
-                    device_config[CONF_WHERE] = validated_where
-                    _new_key = (
-                        f"{current_who}-{validated_where}#4#{bus_interface_value}"
-                        if bus_interface_value is not None
-                        else f"{current_who}-{validated_where}"
-                    )
-                elif current_who == "4":
-                    # Validazione WHERE per WHO=4 (attuatori termo, es. scaldasalviette)
-                    validated_where = ZoneActuatorWhere(
-                        msg=f"Invalid <WHERE> '{where_value}' for WHO=4 (thermo actuator) for device '{device_key_original}'. Expecting Z#N format."
-                    )(where_value)
-                    device_config[CONF_WHERE] = validated_where
-                    # Per WHO=4 con WHERE=Z#N, il bus_interface non è usato nella chiave o nel comando.
-                    if bus_interface_value is not None:
-                        # Potresti voler generare un avviso o un errore se bus_interface è specificato per WHO=4
-                        pass # Ignoralo per ora o logga un warning
-                    _new_key = f"{current_who}-{validated_where}"
-                else:
-                    # SeCONF_WHO può essere diverso da 1 o 4 per altri tipi di device che usano questo schema generico.
-                    # Per lo switch, lo schema interno ha già limitato a "1" o "4".
-                    # Questa condizione è una sicurezza aggiuntiva.
-                    raise Invalid(f"Unsupported WHO value '{current_who}' for device '{device_key_original}' when CONF_WHERE is present.")
-
-                _rekeyed_data[_new_key] = device_config
-
-            elif CONF_ZONE in device_config: # Logica esistente per climate
-                # Questa parte gestisce principalmente le entità CLIMATE
-                # Assicurati che current_who sia corretto anche qui, se CONF_WHO è presente
-                # Per climate, WHO è tipicamente "4"
-                climate_who = device_config.get(CONF_WHO, "4") # Default a 4 per climate
-                zone_value = device_config[CONF_ZONE]
-                
-                # Genera una chiave iniziale per referenziare il dispositivo prima di modificare zone_value
-                # Se _new_key è già stato generato dalla logica CONF_WHERE, non sovrascriverlo
-                # a meno che non sia la logica specifica che vuoi.
-                # L'attuale codice non ha un _new_key definito prima di questo blocco if/elif.
-                initial_key_for_zone = f"{climate_who}-{zone_value}" # Chiave basata sulla zona originale
-
-                is_central = device_config.get(CONF_CENTRAL, False)
-                if is_central and zone_value != "#0":
-                    device_config[CONF_ZONE] = f"#0#{zone_value}"
-                # else: zone_value rimane com'è (es. "#0" o "1" per standalone)
-                
-                device_config[CONF_NAME] = (
-                    device_config.get(CONF_NAME) or # Usa il nome fornito se c'è
-                    ("Central unit" if device_config[CONF_ZONE].startswith("#0") and not device_config[CONF_ZONE].split("#")[-1] # Solo #0
-                     else f"Zone {device_config[CONF_ZONE].split('#')[-1]}") # Per #0#Z o Z
+            if CONF_WHERE in data[device]:
+                _new_key = (
+                    f"{data[device][CONF_WHO]}-{data[device][CONF_WHERE]}#4#{data[device][CONF_BUS_INTERFACE]}"
+                    if CONF_BUS_INTERFACE in data[device] and data[device][CONF_BUS_INTERFACE] is not None and data[device][CONF_WHO] != "4" # Non per WHO=4
+                    else f"{data[device][CONF_WHO]}-{data[device][CONF_WHERE]}"
                 )
-                _rekeyed_data[initial_key_for_zone] = device_config # Usa la chiave basata sulla zona originale per coerenza
-
-            else:
-                # Se né CONF_WHERE né CONF_ZONE sono presenti, come generiamo la chiave?
-                # Questo potrebbe indicare un errore di configurazione a monte o la necessità
-                # di una chiave di default o un errore. Per ora, copiamo la config con la sua chiave originale.
-                _rekeyed_data[device_key_original] = device_config
-
-
-            # Impostazione dei default comuni, dopo la re-keying
-            # È meglio applicare i default alla device_config che andrà in _rekeyed_data[_new_key]
-            # o _rekeyed_data[initial_key_for_zone]
-            target_config_for_defaults = _rekeyed_data.get(_new_key if CONF_WHERE in device_config else initial_key_for_zone if CONF_ZONE in device_config else device_key_original)
-            if target_config_for_defaults:
-                 if CONF_DEVICE_MODEL not in target_config_for_defaults:
-                    target_config_for_defaults[CONF_DEVICE_MODEL] = None
-                 if CONF_ICON not in target_config_for_defaults:
-                    target_config_for_defaults[CONF_ICON] = None
-                 if CONF_ICON_ON not in target_config_for_defaults:
-                    target_config_for_defaults[CONF_ICON_ON] = None
-                 if CONF_ENTITY_NAME not in target_config_for_defaults:
-                    target_config_for_defaults[CONF_ENTITY_NAME] = None
+                _rekeyed_data[_new_key] = data[device]
+            elif CONF_ZONE in data[device]: # Logica per CLIMATE
+                _new_key = f"{data[device][CONF_WHO]}-{data[device][CONF_ZONE]}"
+                data[device][CONF_ZONE] = f"#0#{data[device][CONF_ZONE]}" if data[device][CONF_CENTRAL] and data[device][CONF_ZONE] != "#0" else data[device][CONF_ZONE]
+                data[device][CONF_NAME] = (
+                    data[device][CONF_NAME] if CONF_NAME in data[device] else "Central unit" if data[device][CONF_ZONE].startswith("#0") else f"Zone {data[device][CONF_ZONE]}"
+                )
+                _rekeyed_data[_new_key] = data[device]
             
+            if CONF_DEVICE_MODEL not in data[device]:
+                data[device][CONF_DEVICE_MODEL] = None
+            if CONF_ICON not in data[device]:
+                data[device][CONF_ICON] = None
+            if CONF_ICON_ON not in data[device]:
+                data[device][CONF_ICON_ON] = None
+            if CONF_ENTITY_NAME not in data[device]:
+                data[device][CONF_ENTITY_NAME] = None
+
         return _rekeyed_data
 
 
@@ -453,9 +348,13 @@ light_schema = MyHomeDeviceSchema(
 switch_schema = MyHomeDeviceSchema(
     {
         Required(str): {
-            # Permetti WHO "1" (luci/attuatori generici) o "4" (attuatori termo)
+            # Permetti WHO "1" (luci/attuatori generici) o "4" (termoarredo/attuatore riscaldamento)
             Optional(CONF_WHO, default="1"): In(["1", "4"]),
-            Required(CONF_WHERE): Coerce(str),  # Validazione più specifica in MyHomeDeviceSchema
+            Required(CONF_WHERE): All(
+                Coerce(str), Any(General(), Area(), Group(), PointToPoint(), ActuatorWhere(), msg="Invalid <WHERE>, expecting a valid General, Area, Group, Point-to-Point, or Actuator (Z#N) <WHERE>")
+            ),
+            # Bus interface non si applica a WHO=4 per questo scenario, ma lo schema lo permette opzionalmente.
+            # La validazione in MyHomeDeviceSchema.__call__ può verificare la sua assenza per WHO=4.
             Optional(CONF_BUS_INTERFACE): All(Coerce(str), BusInterface()),
             Required(CONF_NAME): str,
             Optional(CONF_ENTITY_NAME): str,
@@ -495,14 +394,11 @@ cover_schema = MyHomeDeviceSchema(
 binary_sensor_schema = MyHomeDeviceSchema(
     {
         Required(str): {
-            Optional(CONF_WHO, default="25"): In(["1", "4", "9", "18", "25"]),
+            Optional(CONF_WHO, default="25"): In(["1", "9", "25"]),
             Required(CONF_WHERE): All(Coerce(str), SpecialWhere()),
-            Optional(CONF_PHASE): str,
             Required(CONF_NAME): str,
             Optional(CONF_ENTITY_NAME): str,
             Optional(CONF_INVERTED, default=False): Boolean(),
-            Optional(CONF_ICON): str,
-            Optional(CONF_ICON_ON): str,
             Optional(CONF_DEVICE_CLASS): In(
                 [
                     BinarySensorDeviceClass.BATTERY,

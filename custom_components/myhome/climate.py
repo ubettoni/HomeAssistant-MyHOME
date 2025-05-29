@@ -191,10 +191,7 @@ class MyHOMEClimate(MyHOMEEntity, ClimateEntity):
         if self._local_target_temperature is not None:
             return self._local_target_temperature
         else:
-            return (
-                (self._target_temperature - self._local_offset)
-                if self._target_temperature is not None else None
-            )
+            return self._target_temperature
 
     async def async_set_hvac_mode(self, hvac_mode):
         """Set new target hvac mode."""
@@ -296,6 +293,9 @@ class MyHOMEClimate(MyHOMEEntity, ClimateEntity):
                 message.human_readable_log,
             )
             self._target_temperature = message.set_temperature
+            self._local_target_temperature = (
+                self._target_temperature + self._local_offset
+            )
         elif message.message_type == MESSAGE_TYPE_LOCAL_OFFSET:
             LOGGER.info(
                 "%s %s",
@@ -303,6 +303,10 @@ class MyHOMEClimate(MyHOMEEntity, ClimateEntity):
                 message.human_readable_log,
             )
             self._local_offset = message.local_offset
+            if self._target_temperature is not None:
+                self._local_target_temperature = (
+                    self._target_temperature + self._local_offset
+                )
         elif message.message_type == MESSAGE_TYPE_LOCAL_TARGET_TEMPERATURE:
             LOGGER.info(
                 "%s %s",
@@ -310,6 +314,9 @@ class MyHOMEClimate(MyHOMEEntity, ClimateEntity):
                 message.human_readable_log,
             )
             self._local_target_temperature = message.local_set_temperature
+            self._target_temperature = (
+                self._local_target_temperature - self._local_offset
+            )
         elif message.message_type == MESSAGE_TYPE_MODE:
             if (
                 message.mode == CLIMATE_MODE_AUTO
@@ -401,6 +408,9 @@ class MyHOMEClimate(MyHOMEEntity, ClimateEntity):
                 self._attr_hvac_mode = HVACMode.OFF
                 self._attr_hvac_action = HVACAction.OFF
             self._target_temperature = message.set_temperature
+            self._local_target_temperature = (
+                self._target_temperature + self._local_offset
+            )
         elif message.message_type == MESSAGE_TYPE_ACTION:
             LOGGER.info(
                 "%s %s",
@@ -408,10 +418,43 @@ class MyHOMEClimate(MyHOMEEntity, ClimateEntity):
                 message.human_readable_log,
             )
             if message.is_active():
-                if self._attr_hvac_mode == HVACMode.HEAT:
-                    self._attr_hvac_action = HVACAction.HEATING
-                if self._attr_hvac_mode == HVACMode.COOL:
+#                if self._heating and self._cooling:
+#                    if message.is_heating():
+#                        self._attr_hvac_action = HVACAction.HEATING
+#                    elif message.is_cooling():
+#                        self._attr_hvac_action = HVACAction.COOLING
+#                elif self._heating:
+#                    self._attr_hvac_action = HVACAction.HEATING
+#                elif self._cooling:
+#                    self._attr_hvac_action = HVACAction.COOLING
+
+# Working 05/07/2024
+
+#                if message.is_heating():
+#                    self._attr_hvac_action = HVACAction.HEATING
+#                elif message.is_cooling():
+#                    self._attr_hvac_action = HVACAction.COOLING
+#                elif self._heating:
+#                    self._attr_hvac_action = HVACAction.HEATING
+#                elif self._cooling:
+#                    self._attr_hvac_action = HVACAction.COOLING
+
+# New 05/07/2024
+                if message.is_heating():
+                    if self._attr_hvac_mode == HVACMode.COOL:
+                        self._attr_hvac_action = HVACAction.COOLING
+                    else:
+                        self._attr_hvac_action = HVACAction.HEATING
+                elif message.is_cooling():
                     self._attr_hvac_action = HVACAction.COOLING
+                elif self._heating:
+                    if self._attr_hvac_mode == HVACMode.COOL:
+                        self._attr_hvac_action = HVACAction.COOLING
+                    else:
+                        self._attr_hvac_action = HVACAction.HEATING
+                elif self._cooling:
+                    self._attr_hvac_action = HVACAction.COOLING
+                    
             elif self._attr_hvac_mode == HVACMode.OFF:
                 self._attr_hvac_action = HVACAction.OFF
             else:

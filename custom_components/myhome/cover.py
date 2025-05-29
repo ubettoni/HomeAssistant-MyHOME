@@ -35,6 +35,7 @@ from .const import (
 from .myhome_device import MyHOMEEntity
 from .gateway import MyHOMEGatewayHandler
 from datetime import datetime
+
 import asyncio
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
@@ -110,6 +111,7 @@ class MyHOMECover(MyHOMEEntity, CoverEntity):
 
         self._interface = interface
         self._full_where = f"{self._where}#4#{self._interface}" if self._interface is not None else self._where
+
         self._attr_opening_time = opening_time
         self._attr_closing_time = closing_time
         self._attr_advanced = advanced
@@ -133,6 +135,7 @@ class MyHOMECover(MyHOMEEntity, CoverEntity):
         self._attr_is_closing = None
         self._attr_is_closed = None
         self._attr_last_event = datetime.now()
+
 
     async def async_update(self):
         """Update the entity.
@@ -186,18 +189,20 @@ class MyHOMECover(MyHOMEEntity, CoverEntity):
                     await self._gateway_handler.send(OWNAutomationCommand.stop_shutter(self._full_where))
 
 
+
     async def async_stop_cover(self, **kwargs):  # pylint: disable=unused-argument
         """Stop the cover."""
         await self._gateway_handler.send(OWNAutomationCommand.stop_shutter(self._full_where))
 
     def handle_event(self, message: OWNAutomationEvent):
         """Handle an event message."""
-        LOGGER.info(
+        LOGGER.debug(
             "%s %s",
             self._gateway_handler.log_id,
             message.human_readable_log,
         )
-        
+
+
         if message.current_position is not None:
             self._attr_current_cover_position = message.current_position
         elif self._attr_last_event is not None and self._attr_opening_time > 0 and self._attr_closing_time > 0:
@@ -214,7 +219,7 @@ class MyHOMECover(MyHOMEEntity, CoverEntity):
                     elif self._attr_current_cover_position is not None:
                         self._attr_current_cover_position = round(max(0, self._attr_current_cover_position - (100 * elapsed_seconds / self._attr_closing_time)), 0)
 
-            LOGGER.debug(
+            LOGGER.info(
                 "%s %s",
                 self._gateway_handler.log_id,
                 self._attr_current_cover_position,

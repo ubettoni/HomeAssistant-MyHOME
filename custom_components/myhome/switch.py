@@ -1,4 +1,4 @@
-"""Support for MyHome switches (light modules used for controlled outlets, relays AND thermo actuators)."""
+"""Support for MyHome switches (light modules, controlled outlets, relays, and heating actuators)."""
 from homeassistant.components.switch import (
     DOMAIN as PLATFORM,
     SwitchDeviceClass,
@@ -7,14 +7,13 @@ from homeassistant.components.switch import (
 from homeassistant.const import (
     CONF_NAME,
     CONF_MAC,
-    CONF_ENTITIES, # Aggiunto se mancante dalle tue costanti
 )
 
 from OWNd.message import (
     OWNLightingEvent,
     OWNLightingCommand,
-    OWNHeatingEvent,       # <-- NUOVA IMPORTAZIONE
-    OWNHeatingCommand,     # <-- NUOVA IMPORTAZIONE
+    OWNHeatingEvent,       # Aggiunta per termoarredo
+    OWNHeatingCommand,     # Aggiunta per termoarredo
 )
 
 from .const import (
@@ -25,10 +24,10 @@ from .const import (
     CONF_ICON_ON,
     CONF_WHO,
     CONF_WHERE,
-    CONF_BUS_INTERFACE, # Assicurati sia definito
+    CONF_BUS_INTERFACE,
     CONF_MANUFACTURER,
     CONF_DEVICE_MODEL,
-    CONF_DEVICE_CLASS, # Assicurati sia definito
+    CONF_DEVICE_CLASS,
     DOMAIN,
     LOGGER,
 )
@@ -40,69 +39,76 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     if PLATFORM not in hass.data[DOMAIN][config_entry.data[CONF_MAC]][CONF_PLATFORMS]:
         return True
 
-    _switches = []
-    _configured_switches = hass.data[DOMAIN][config_entry.data[CONF_MAC]][CONF_PLATFORMS][PLATFORM]
+    devices_to_add = []
+    configured_devices = hass.data[DOMAIN][config_entry.data[CONF_MAC]][CONF_PLATFORMS][PLATFORM]
 
-    for _switch_id in _configured_switches.keys(): # Rinominato _switch a _switch_id
-        config_data = _configured_switches[_switch_id]
-        who = config_data[CONF_WHO]
-
-        if who == "1": # Logica esistente per interruttori basati su luci (WHO=1)
-            entity = MyHOMESwitch(
+    for device_id, config in configured_devices.items():
+        who = config.get(CONF_WHO)
+        
+        if who == "1": # Switch di illuminazione esistente
+            LOGGER.debug(f"Configuring MyHOMESwitch (WHO=1): {device_id} with config {config}")
+            instance = MyHOMESwitch(
                 hass=hass,
-                device_id=_switch_id,
-                who=config_data[CONF_WHO],
-                where=config_data[CONF_WHERE],
-                icon=config_data.get(CONF_ICON), # Usare .get() per opzionali
-                icon_on=config_data.get(CONF_ICON_ON), # Usare .get() per opzionali
-                interface=config_data.get(CONF_BUS_INTERFACE), # Usare .get() per opzionali
-                name=config_data[CONF_NAME],
-                entity_name=config_data[CONF_ENTITY_NAME],
-                device_class=config_data.get(CONF_DEVICE_CLASS, "switch"), # Default a switch
-                manufacturer=config_data[CONF_MANUFACTURER],
-                model=config_data[CONF_DEVICE_MODEL],
+                device_id=device_id,
+                who=who,
+                where=config[CONF_WHERE],
+                icon=config.get(CONF_ICON), # Usare .get() per opzionali
+                icon_on=config.get(CONF_ICON_ON),
+                interface=config.get(CONF_BUS_INTERFACE),
+                name=config[CONF_NAME],
+                entity_name=config.get(CONF_ENTITY_NAME),
+                device_class=config.get(CONF_DEVICE_CLASS, SwitchDeviceClass.SWITCH), # Default
+                manufacturer=config.get(CONF_MANUFACTURER, "BTicino S.p.A."),
+                model=config.get(CONF_DEVICE_MODEL, "Lighting Actuator"),
                 gateway=hass.data[DOMAIN][config_entry.data[CONF_MAC]][CONF_ENTITY],
             )
-            _switches.append(entity)
-        elif who == "4": # NUOVA LOGICA per attuatori Termo (WHO=4) come scaldasalviette
-            # Per gli attuatori termo, CONF_WHERE dovrebbe essere Z#N
-            # CONF_DEVICE_CLASS potrebbe essere "switch" o un nuovo tipo se vuoi distinguerlo
-            entity = MyHOMEThermoActuatorSwitch( # Nuova classe
+            devices_to_add.append(instance)
+        elif who == "4": # Nuovo switch attuatore per termoarredo
+            LOGGER.info(f"Configuring MyHomeActuatorSwitch (WHO=4 - Termoarredo): {device_id} with config {config}")
+            instance = MyHomeActuatorSwitch(
                 hass=hass,
-                device_id=_switch_id,
-                who=config_data[CONF_WHO], # Sarà "4"
-                where=config_data[CONF_WHERE], # Deve essere "Z#N"
-                name=config_data[CONF_NAME],
-                entity_name=config_data[CONF_ENTITY_NAME],
-                # device_class non è usato direttamente da SwitchEntity come per BinarySensor,
-                # ma potremmo usarlo per logica interna o attributi se necessario.
-                # SwitchDeviceClass.SWITCH è implicito se non si specifica outlet.
-                manufacturer=config_data[CONF_MANUFACTURER],
-                model=config_data.get(CONF_DEVICE_MODEL, "Thermo Actuator Switch"), # Modello di default
+                device_id=device_id,
+                who=who,
+                where=config[CONF_WHERE], # Formato atteso: Z#N, es. "9#1"
+                name=config[CONF_NAME],
+                # I seguenti potrebbero non essere direttamente applicabili o necessitare di valori specifici
+                entity_name=config.get(CONF_ENTITY_NAME, config[CONF_NAME]), # Default a nome principale se non specificato
+                icon=config.get(CONF_ICON), 
+                icon_on=config.get(CONF_ICON_ON),
+                device_class=config.get(CONF_DEVICE_CLASS, SwitchDeviceClass.SWITCH),
+                manufacturer=config.get(CONF_MANUFACTURER, "BTicino S.p.A."),
+                model=config.get(CONF_DEVICE_MODEL, "Heating Actuator"),
                 gateway=hass.data[DOMAIN][config_entry.data[CONF_MAC]][CONF_ENTITY],
             )
-            _switches.append(entity)
+            devices_to_add.append(instance)
+        else:
+            LOGGER.warning(f"Unsupported WHO value '{who}' for switch configuration: {device_id}")
+
+    if devices_to_add:
+        async_add_entities(devices_to_add)
+        LOGGER.info(f"Added {len(devices_to_add)} MyHome switch entities.")
+    else:
+        LOGGER.info("No MyHome switch entities to add.")
 
 
-    async_add_entities(_switches)
-
-
-async def async_unload_entry(hass, config_entry): # Funzione di unload esistente
-    if PLATFORM not in hass.data[DOMAIN][config_entry.data[CONF_MAC]][CONF_PLATFORMS]:
+async def async_unload_entry(hass, config_entry):
+    # La logica di unload esistente sembra agire a livello di piattaforma e chiavi,
+    # quindi potrebbe non necessitare modifiche immediate per il nuovo tipo,
+    # ma assicurati che sia robusta se la configurazione cambia dinamicamente.
+    if PLATFORM not in hass.data[DOMAIN].get(config_entry.data[CONF_MAC], {}).get(CONF_PLATFORMS, {}):
         return True
 
-    # Non è necessario iterare e cancellare uno per uno qui se la piattaforma
-    # viene rimossa completamente. La struttura dati verrà eliminata da HA.
-    # Tuttavia, se si vuole essere precisi per la cancellazione di singole entità:
-    # _configured_switches = hass.data[DOMAIN][config_entry.data[CONF_MAC]][CONF_PLATFORMS][PLATFORM]
-    # for _switch_id in list(_configured_switches.keys()): # list() per evitare errori di dimensione durante iterazione
-    #     del hass.data[DOMAIN][config_entry.data[CONF_MAC]][CONF_PLATFORMS][PLATFORM][_switch_id]
-    # Se si rimuove l'intera piattaforma per la entry:
+    # Questo è un unload semplificato. Una gestione completa potrebbe essere più complessa.
+    # Ad esempio, se le entità sono tracciate, dovrebbero essere rimosse esplicitamente.
+    # Per ora, si assume che la rimozione dei dati dalla config porti HA a rimuovere le entità.
+    
+    # Rimuovi la configurazione per la piattaforma SWITCH
     hass.data[DOMAIN][config_entry.data[CONF_MAC]][CONF_PLATFORMS].pop(PLATFORM, None)
+    LOGGER.info(f"MyHome switch platform unloaded for gateway {config_entry.data[CONF_MAC]}.")
     return True
 
 
-class MyHOMESwitch(MyHOMEEntity, SwitchEntity): # Classe esistente
+class MyHOMESwitch(MyHOMEEntity, SwitchEntity):
     def __init__(
         self,
         hass,
@@ -111,19 +117,19 @@ class MyHOMESwitch(MyHOMEEntity, SwitchEntity): # Classe esistente
         icon: str,
         icon_on: str,
         device_id: str,
-        who: str, # Sarà "1"
+        who: str,
         where: str,
         interface: str,
-        device_class: str, # "outlet" o "switch"
+        device_class: str,
         manufacturer: str,
         model: str,
         gateway: MyHOMEGatewayHandler,
     ):
         super().__init__(
             hass=hass,
-            name=name,
+            name=name, # Questo è il nome 'principale' del dispositivo MyHome
             platform=PLATFORM,
-            device_id=device_id,
+            device_id=device_id, # Usato per object_id in HA
             who=who,
             where=where,
             manufacturer=manufacturer,
@@ -131,175 +137,221 @@ class MyHOMESwitch(MyHOMEEntity, SwitchEntity): # Classe esistente
             gateway=gateway,
         )
 
-        self._attr_name = entity_name if entity_name else name # Nome entità più specifico
+        # Il nome visualizzato dall'entità in HA
+        self._attr_name = entity_name if entity_name else name
 
         self._interface = interface
-        # _full_where è specifico per comandi luci con interfaccia bus,
-        # non necessario per attuatori termo WHO=4 che usano Z#N direttamente.
+        # _full_where è specifico per WHO=1 che potrebbe usare l'interfaccia
         self._full_where = f"{self._where}#4#{self._interface}" if self._interface is not None else self._where
+        
+        # Questi attributi extra potrebbero non essere rilevanti per tutti i tipi di WHERE
+        try:
+            if who == "1" and not where.startswith("#") and not where == "0" and len(where) % 2 == 0 and where.isalnum(): # Tipico PointToPoint A/PL
+                 self._attr_extra_state_attributes = {
+                    "A": where[: len(where) // 2],
+                    "PL": where[len(where) // 2 :],
+                }
+                 if self._interface is not None:
+                    self._attr_extra_state_attributes["Int"] = self._interface
+            else: # Per Generale, Gruppo o altri formati
+                self._attr_extra_state_attributes = {}
 
-        self._attr_extra_state_attributes = {
-            "openwebnet_who": self._who,
-            "openwebnet_where": self._where, # Where originale senza interfaccia
-        }
-        if self._interface is not None: #
-            self._attr_extra_state_attributes["bus_interface"] = self._interface #
+        except TypeError: # In caso where sia None o non stringa
+             self._attr_extra_state_attributes = {}
 
-        if device_class and device_class.lower() == "outlet":
-            self._attr_device_class = SwitchDeviceClass.OUTLET
-        else:
-            self._attr_device_class = SwitchDeviceClass.SWITCH
+
+        self._attr_device_class = SwitchDeviceClass.OUTLET if device_class and device_class.lower() == "outlet" else SwitchDeviceClass.SWITCH
 
         self._on_icon = icon_on
         self._off_icon = icon
 
         if self._off_icon is not None:
             self._attr_icon = self._off_icon
+        else: # Default icon se non specificato
+            self._attr_icon = "mdi:toggle-switch-off-outline"
 
-        self._attr_is_on = None # Stato iniziale
+
+        self._attr_is_on = None
+        LOGGER.debug(f"Initialized MyHOMESwitch (WHO=1): {self.name} ({self.unique_id})")
+
+
+    @property
+    def is_on(self):
+        """Return true if switch is on."""
+        return self._attr_is_on
 
     async def async_update(self):
         """Update the entity."""
-        # Per WHO=1 (luci/attuatori), usa OWNLightingCommand
+        LOGGER.debug(f"Requesting update for MyHOMESwitch {self._full_where} ({self.name})")
         await self._gateway_handler.send_status_request(OWNLightingCommand.status(self._full_where))
 
     async def async_turn_on(self, **kwargs):  # pylint: disable=unused-argument
         """Turn the device on."""
+        LOGGER.info(f"Turning ON MyHOMESwitch {self._full_where} ({self.name})")
         await self._gateway_handler.send(OWNLightingCommand.switch_on(self._full_where))
+        # Optimistic update
+        # self._attr_is_on = True
+        # self._update_icon()
+        # self.async_write_ha_state()
+
 
     async def async_turn_off(self, **kwargs):  # pylint: disable=unused-argument
         """Turn the device off."""
+        LOGGER.info(f"Turning OFF MyHOMESwitch {self._full_where} ({self.name})")
         await self._gateway_handler.send(OWNLightingCommand.switch_off(self._full_where))
+        # Optimistic update
+        # self._attr_is_on = False
+        # self._update_icon()
+        # self.async_write_ha_state()
 
-    def handle_event(self, message: OWNLightingEvent): # Gestisce eventi WHO=1
+    def _update_icon(self):
+        if self._off_icon is not None and self._on_icon is not None:
+            self._attr_icon = self._on_icon if self._attr_is_on else self._off_icon
+        elif self._attr_is_on:
+            self._attr_icon = "mdi:toggle-switch-variant"
+        else:
+            self._attr_icon = "mdi:toggle-switch-off-outline"
+
+
+    def handle_event(self, message: OWNLightingEvent):
         """Handle an event message."""
-        # Assicurati che l'evento sia per questa entità
-        if message.unique_id != self.unique_id: # Confronto ID univoco
-             return
-
-        log_message_prefix = ""
-        if self._attr_device_class == SwitchDeviceClass.SWITCH:
-            log_message_prefix = "Switch"
-        elif self._attr_device_class == SwitchDeviceClass.OUTLET:
-            log_message_prefix = "Outlet"
+        # Assumiamo che MyHOMEEntity filtri gli eventi per unique_id
+        
+        log_prefix = "Switch" # Default
+        if self._attr_device_class == SwitchDeviceClass.OUTLET:
+            log_prefix = "Outlet"
         
         LOGGER.info(
-            "%s %s: %s",
-            self._gateway_handler.log_id,
-            log_message_prefix,
-            message.human_readable_log.replace("Light", log_message_prefix if log_message_prefix else "Device"),
+            "%s %s: Received lighting event: %s. New state: %s",
+            self._gateway_handler.log_id, # Assumendo che log_id sia nel gateway_handler
+            self.name,
+            message.human_readable_log.replace("Light", log_prefix),
+            "ON" if message.is_on else "OFF"
         )
-        self._attr_is_on = message.is_on #
-        if self._off_icon is not None and self._on_icon is not None: #
-            self._attr_icon = self._on_icon if self._attr_is_on else self._off_icon #
-        self.async_schedule_update_ha_state()
+        
+        new_state = message.is_on
+        if self._attr_is_on != new_state:
+            self._attr_is_on = new_state
+            self._update_icon()
+            self.async_schedule_update_ha_state()
 
+# Nuova classe per il Termoarredo (WHO=4, Dimensione 20)
+class MyHomeActuatorSwitch(MyHOMEEntity, SwitchEntity):
+    """Representation of a MyHome Heating Actuator (WHO=4, DIM=20) as a Switch."""
 
-# NUOVA CLASSE PER LO SCALDASALVIETTE/ATUATTORE TERMO COME SWITCH
-class MyHOMEThermoActuatorSwitch(MyHOMEEntity, SwitchEntity):
     def __init__(
         self,
         hass,
-        name: str,
-        entity_name: str,
-        device_id: str,
-        who: str, # Sarà "4"
-        where: str, # Sarà "Z#N"
+        name: str,           # Nome principale dalla config YAML per il dispositivo MyHome
+        entity_name: str,    # Nome specifico per l'entità HA se diverso
+        icon: str,           # Icona spento
+        icon_on: str,        # Icona acceso
+        device_id: str,      # Usato per l'object_id di HA
+        who: str,
+        where: str,          # Formato atteso: Z#N, es. "9#1"
+        device_class: str,   # "switch" o "outlet"
         manufacturer: str,
         model: str,
         gateway: MyHOMEGatewayHandler,
     ):
         super().__init__(
             hass=hass,
-            name=name, # Nome del dispositivo MyHOME generico
-            platform=PLATFORM, #
-            device_id=device_id, # ID univoco dell'entità HA
-            who=who, #
-            where=where, # L'indirizzo Z#N dell'attuatore
-            manufacturer=manufacturer, #
-            model=model, #
-            gateway=gateway, #
+            name=name, # Nome del dispositivo MyHome
+            platform=PLATFORM, # Dominio SWITCH
+            device_id=device_id, # Usato per object_id
+            who=who,
+            where=where, # Qui WHERE è Z#N
+            manufacturer=manufacturer,
+            model=model,
+            gateway=gateway,
         )
+        # Nome dell'entità in Home Assistant
+        self._attr_name = entity_name if entity_name else name
+        
+        # Non c'è _full_where con interfaccia per questo tipo
+        # self._full_where = where # Usiamo direttamente self._where ereditato
 
-        self._attr_name = entity_name if entity_name else f"Thermo Actuator {self._where}" # Nome entità HA
-        self._attr_device_class = SwitchDeviceClass.SWITCH # È un interruttore generico
+        self._attr_device_class = SwitchDeviceClass.OUTLET if device_class and device_class.lower() == "outlet" else SwitchDeviceClass.SWITCH
         
-        # unique_id è già impostato in MyHOMEEntity come f"{gateway.mac}-{self._device_id}"
-        # o f"{gateway.mac}-{self._who}-{self._where}" a seconda di MyHOMEEntity
-        # Assicuriamoci che sia coerente con come vengono matchati gli eventi
-        # self._attr_unique_id = f"{gateway.mac}-{self._who}-{self._where}" # Sovrascrivi se necessario per coerenza con l'evento
-        
-        self._attr_extra_state_attributes = {
-            "openwebnet_who": self._who,
-            "openwebnet_where": self._where,
-        }
+        self._on_icon = icon_on
+        self._off_icon = icon
+
+        if self._off_icon is not None:
+            self._attr_icon = self._off_icon
+        else: # Icona di default per termoarredo/switch generico
+            self._attr_icon = "mdi:radiator-disabled" if self._attr_device_class == SwitchDeviceClass.SWITCH else "mdi:power-plug-off"
+
+
         self._attr_is_on = None # Stato iniziale
+        LOGGER.debug(f"Initialized MyHomeActuatorSwitch (WHO=4): {self.name} ({self.unique_id})")
 
-    async def async_update(self):
-        """Update the entity by requesting actuator status."""
-        # Usa OWNHeatingCommand per richiedere lo stato dell'attuatore (Dimensione 20)
-        # Assicurati che OWNHeatingCommand.request_actuator_status(self._where) sia implementato
-        # e che self._where (Z#N) sia l'indirizzo corretto.
-        if hasattr(OWNHeatingCommand, "request_actuator_status"):
-            await self._gateway_handler.send_status_request(
-                OWNHeatingCommand.request_actuator_status(self._where)
-            )
-        else:
-            LOGGER.warning(f"OWNHeatingCommand.request_actuator_status method not found for {self.name}")
+    @property
+    def is_on(self):
+        """Return true if switch is on."""
+        return self._attr_is_on
 
-    async def async_turn_on(self, **kwargs):  # pylint: disable=unused-argument
-        """Turn the thermo actuator on."""
-        # Usa OWNHeatingCommand per accendere l'attuatore (Dimensione 20, valore 1)
-        if hasattr(OWNHeatingCommand, "set_actuator_on"):
-            await self._gateway_handler.send(
-                OWNHeatingCommand.set_actuator_on(self._where)
-            )
-            self._attr_is_on = True # Assumi successo per risposta UI più rapida
-            self.async_schedule_update_ha_state() #
-        else:
-            LOGGER.warning(f"OWNHeatingCommand.set_actuator_on method not found for {self.name}")
-
-
-    async def async_turn_off(self, **kwargs):  # pylint: disable=unused-argument
-        """Turn the thermo actuator off."""
-        # Usa OWNHeatingCommand per spegnere l'attuatore (Dimensione 20, valore 0)
-        if hasattr(OWNHeatingCommand, "set_actuator_off"):
-            await self._gateway_handler.send(
-                OWNHeatingCommand.set_actuator_off(self._where)
-            )
-            self._attr_is_on = False # Assumi successo
-            self.async_schedule_update_ha_state() #
-        else:
-            LOGGER.warning(f"OWNHeatingCommand.set_actuator_off method not found for {self.name}")
-
-
-    def handle_event(self, message: OWNHeatingEvent): # Gestisce eventi WHO=4
-        """Handle an event message for WHO=4, Dimension 20 (actuator status)."""
-        # Verifica che l'evento sia per questo specifico attuatore
-        # Il unique_id dell'evento dovrebbe essere "4-Z#N"
-        # Il unique_id di questa entità (da MyHOMEEntity) è f"{self._who}-{self._where}" -> "4-Z#N"
-        if not (message.who == 4 and message.dimension == 20 and message.unique_id == self.unique_id):
-            return
-
-        LOGGER.info(
-            "%s Thermo Actuator Switch (%s): %s",
-            self._gateway_handler.log_id,
-            self._where,
-            message.human_readable_log,
+    async def async_turn_on(self, **kwargs) -> None:
+        """Turn the actuator on."""
+        LOGGER.info(f"Turning ON Actuator (Termoarredo) {self._where} for {self.name}")
+        await self._gateway_handler.send(
+            OWNHeatingCommand.set_actuator_on(self._where) # self._where è Z#N
         )
-        
-        try:
-            actuator_state_value = int(message._dimension_value[0])
-            if actuator_state_value == 1: # Attuatore ON
-                self._attr_is_on = True
-            elif actuator_state_value == 0: # Attuatore OFF
-                self._attr_is_on = False
-            else:
-                # Altri stati (2-9 per ventole, ecc.) non cambiano lo stato ON/OFF di un semplice switch
-                LOGGER.debug(f"Thermo Actuator Switch {self._where} received unhandled state value {actuator_state_value} for ON/OFF state.")
-                return # Non aggiornare lo stato se non è 0 o 1 per un interruttore semplice
-            
-            self.async_schedule_update_ha_state()
+        # Optimistic update
+        # self._attr_is_on = True
+        # self._update_icon()
+        # self.async_write_ha_state()
 
-        except (ValueError, IndexError) as e:
-            LOGGER.error(f"Error processing thermo actuator event for {self._where}: {e} - Data: {message._raw}")
+    async def async_turn_off(self, **kwargs) -> None:
+        """Turn the actuator off."""
+        LOGGER.info(f"Turning OFF Actuator (Termoarredo) {self._where} for {self.name}")
+        await self._gateway_handler.send(
+            OWNHeatingCommand.set_actuator_off(self._where) # self._where è Z#N
+        )
+        # Optimistic update
+        # self._attr_is_on = False
+        # self._update_icon()
+        # self.async_write_ha_state()
+        
+    def _update_icon(self):
+        if self._off_icon is not None and self._on_icon is not None:
+            self._attr_icon = self._on_icon if self._attr_is_on else self._off_icon
+        elif self._attr_is_on:
+            # Icona di default per termoarredo acceso
+            self._attr_icon = "mdi:radiator" if self._attr_device_class == SwitchDeviceClass.SWITCH else "mdi:power-plug"
+        else:
+            # Icona di default per termoarredo spento
+            self._attr_icon = "mdi:radiator-disabled" if self._attr_device_class == SwitchDeviceClass.SWITCH else "mdi:power-plug-off"
+
+
+    async def async_update(self) -> None:
+        """Request state update for the actuator."""
+        LOGGER.debug(f"Requesting update for Actuator (Termoarredo) {self._where} ({self.name})")
+        await self._gateway_handler.send_status_request( 
+            OWNHeatingCommand.get_actuator_status(self._where) # self._where è Z#N
+        )
+
+    def handle_event(self, message: OWNHeatingEvent) -> None:
+        """Handle an event message from the gateway for WHO=4."""
+        # La classe base MyHOMEEntity dovrebbe aver già filtrato per unique_id (who-where)
+        
+        # Verifica che sia un evento di stato per un attuatore (Dimensione 20)
+        if message.dimension == 20: 
+            # message.is_active() da OWNHeatingEvent per dim=20:
+            # True se dimension_value[0] è "1" (ON)
+            # False se dimension_value[0] è "0" (OFF)
+            new_state = message.is_active()
+            
+            LOGGER.info(
+                "%s %s (Termoarredo): Received actuator status event. Raw value: '%s', Parsed state: %s",
+                self._gateway_handler.log_id, # Assumendo log_id nel gateway_handler
+                self.name,
+                message._dimension_value[0], # Valore grezzo (stringa "0" o "1")
+                "ON" if new_state else "OFF"
+            )
+
+            if self._attr_is_on != new_state:
+                self._attr_is_on = new_state
+                self._update_icon()
+                self.async_schedule_update_ha_state()
+        # else:
+            # LOGGER.debug(f"{self.name} (Termoarredo) received unhandled WHO=4 event: DIM={message.dimension}")

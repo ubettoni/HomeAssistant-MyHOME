@@ -46,11 +46,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     if entry.data[CONF_MAC] not in hass.data[DOMAIN]:
         hass.data[DOMAIN][entry.data[CONF_MAC]] = {}
 
-    _config_file_path = (
-        str(entry.options[CONF_FILE_PATH])
-        if CONF_FILE_PATH in entry.options
-        else "/config/myhome.yaml"
-    )
+
+    system_config_dir = hass.config.config_dir
+    default_config_path = f"{system_config_dir}/myhome.yaml"
+
+#    _config_file_path = (
+#        str(entry.options[CONF_FILE_PATH])
+#        if CONF_FILE_PATH in entry.options
+#        else "/config/myhome.yaml"
+#    )
+    _config_file_path = str(entry.options[CONF_FILE_PATH]) if CONF_FILE_PATH in entry.options else default_config_path
+    
     _generate_events = (
         entry.options[CONF_GENERATE_EVENTS]
         if CONF_GENERATE_EVENTS in entry.options
