@@ -66,26 +66,71 @@ def format_mac(address: str) -> str:
     return ha_format_mac(mac)
 
 class ZoneActuatorWhere(object):
-    """Validate WHERE for WHO=4 actuators (format Z#N)."""
+    """
+    Validate WHERE for WHO=4 actuators.
+    Accepts "Z#N" (e.g., "1#5", "12#3").
+    Accepts "ZN" (2 digits, e.g., "91" becomes "9#1". Z is first, N is second. N must be 1-9).
+    Accepts "ZZN" (3 digits, e.g., "101" becomes "10#1". ZZ is first two, N is last. N must be 1-9).
+    Returns the normalized "Z#N" string.
+    """
     def __init__(self, msg=None):
         self.msg = msg
 
     def __call__(self, v):
         if not isinstance(v, str):
-            raise Invalid(f"Invalid Zone#Actuator WHERE {v}, it must be a string.")
-        if not re.fullmatch(r"^\d{1,2}#\d{1,2}$", v): # Es. 1#5, 12#1, 0#3
-            raise Invalid(
-                f"Invalid Zone#Actuator WHERE '{v}'. "
-                "It must be a string in the format 'Z#N' (e.g., '1#5' for Zone 1, Actuator 5)."
-            )
-        try:
-            zone, actuator = map(int, v.split("#"))
-            # Aggiungi controlli sui range se necessario, es:
-            if not (0 <= zone <= 99 and 1 <= actuator <= 9): # Esempio di range
-                raise Invalid(f"Zone or Actuator number out of range in '{v}'.")
-        except ValueError:
-            raise Invalid(f"Invalid numbers in Zone#Actuator WHERE '{v}'.")
-        return v
+            raise Invalid(f"Zone#Actuator WHERE must be a string, got {v}.")
+
+        # Prova il formato Z#N
+        match_z_hash_n = re.fullmatch(r"^(\d{1,2})#(\d{1,2})$", v)
+        if match_z_hash_n:
+            zone_str, actuator_str = match_z_hash_n.groups()
+            try:
+                zone = int(zone_str)
+                actuator = int(actuator_str)
+                # Valida i range (esempio, adattali se necessario)
+                if not (0 <= zone <= 99 and 1 <= actuator <= 99): # MyHome solitamente ha attuatori 1-9 per zona
+                    raise Invalid(f"Zone (0-99) or Actuator (1-99) number out of range in '{v}'.")
+                return f"{zone}#{actuator}" # Ritorna normalizzato
+            except ValueError:
+                raise Invalid(f"Invalid numbers in Zone#Actuator WHERE '{v}'.")
+
+        # Prova il formato ZN (2 cifre)
+        match_zn = re.fullmatch(r"^(\d)(\d)$", v) # Z e N singola cifra
+        if match_zn:
+            zone_str, actuator_str = match_zn.groups()
+            try:
+                zone = int(zone_str)
+                actuator = int(actuator_str)
+                if not (0 <= zone <= 9 and 1 <= actuator <= 9): # Limiti per Z e N singola cifra
+                    raise Invalid(
+                        f"For 2-digit WHERE '{v}', Zone (0-9) or Actuator (1-9) out of range or Actuator is 0."
+                    )
+                return f"{zone}#{actuator}" # Normalizza e ritorna
+            except ValueError: # Non dovrebbe accadere con regex \d
+                raise Invalid(f"Invalid numbers in 2-digit ZoneActuator WHERE '{v}'.")
+
+        # Prova il formato ZZN (3 cifre)
+        match_zzn = re.fullmatch(r"^(\d{2})(\d)$", v) # ZZ due cifre, N singola cifra
+        if match_zzn:
+            zone_str, actuator_str = match_zzn.groups()
+            try:
+                zone = int(zone_str)
+                actuator = int(actuator_str)
+                if not (0 <= zone <= 99 and 1 <= actuator <= 9): # Limiti per ZZ e N singola cifra
+                    raise Invalid(
+                        f"For 3-digit WHERE '{v}', Zone (0-99) or Actuator (1-9) out of range or Actuator is 0."
+                    )
+                return f"{zone}#{actuator}" # Normalizza e ritorna
+            except ValueError: # Non dovrebbe accadere
+                raise Invalid(f"Invalid numbers in 3-digit ZoneActuator WHERE '{v}'.")
+        
+        # Se nessun formato corrisponde
+        default_msg = (
+            f"Invalid Zone#Actuator WHERE '{v}'. Expected format 'Z#N' (e.g., '1#5'), "
+            f"'ZN' (2 digits, e.g., '91' for Z=9, N=1), or "
+            f"'ZZN' (3 digits, e.g., '101' for Z=10, N=1)."
+        )
+        raise Invalid(self.msg or default_msg)
 
     def __repr__(self):
         return "ZoneActuatorWhere(msg=%r)" % (self.msg)
