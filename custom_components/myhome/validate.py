@@ -65,6 +65,32 @@ def format_mac(address: str) -> str:
         return None
     return ha_format_mac(mac)
 
+class ZoneActuatorWhere(object):
+    """Validate WHERE for WHO=4 actuators (format Z#N)."""
+    def __init__(self, msg=None):
+        self.msg = msg
+
+    def __call__(self, v):
+        if not isinstance(v, str):
+            raise Invalid(f"Invalid Zone#Actuator WHERE {v}, it must be a string.")
+        if not re.fullmatch(r"^\d{1,2}#\d{1,2}$", v): # Es. 1#5, 12#1, 0#3
+            raise Invalid(
+                f"Invalid Zone#Actuator WHERE '{v}'. "
+                "It must be a string in the format 'Z#N' (e.g., '1#5' for Zone 1, Actuator 5)."
+            )
+        try:
+            zone, actuator = map(int, v.split("#"))
+            # Aggiungi controlli sui range se necessario, es:
+            if not (0 <= zone <= 99 and 1 <= actuator <= 9): # Esempio di range
+                raise Invalid(f"Zone or Actuator number out of range in '{v}'.")
+        except ValueError:
+            raise Invalid(f"Invalid numbers in Zone#Actuator WHERE '{v}'.")
+        return v
+
+    def __repr__(self):
+        return "ZoneActuatorWhere(msg=%r)" % (self.msg)
+
+
 
 class MacAddress(object):
     def __init__(self, msg=None):
@@ -208,36 +234,111 @@ class MyHomeConfigSchema(Schema):
         return _rekeyed_data
 
 
+# In validate.py, modifica la classe MyHomeDeviceSchema
+
 class MyHomeDeviceSchema(Schema):
     def __call__(self, data):
         data = super().__call__(data)
         _rekeyed_data = {}
 
-        for device in data:
-            data[device][CONF_ENTITIES] = {}
-            if CONF_WHERE in data[device]:
-                _new_key = (
-                    f"{data[device][CONF_WHO]}-{data[device][CONF_WHERE]}#4#{data[device][CONF_BUS_INTERFACE]}"
-                    if CONF_BUS_INTERFACE in data[device] and data[device][CONF_BUS_INTERFACE] is not None
-                    else f"{data[device][CONF_WHO]}-{data[device][CONF_WHERE]}"
-                )
-                _rekeyed_data[_new_key] = data[device]
-            elif CONF_ZONE in data[device]:
-                _new_key = f"{data[device][CONF_WHO]}-{data[device][CONF_ZONE]}"
-                data[device][CONF_ZONE] = f"#0#{data[device][CONF_ZONE]}" if data[device][CONF_CENTRAL] and data[device][CONF_ZONE] != "#0" else data[device][CONF_ZONE]
-                data[device][CONF_NAME] = (
-                    data[device][CONF_NAME] if CONF_NAME in data[device] else "Central unit" if data[device][CONF_ZONE].startswith("#0") else f"Zone {data[device][CONF_ZONE]}"
-                )
-                _rekeyed_data[_new_key] = data[device]
-            if CONF_DEVICE_MODEL not in data[device]:
-                data[device][CONF_DEVICE_MODEL] = None
-            if CONF_ICON not in data[device]:
-                data[device][CONF_ICON] = None
-            if CONF_ICON_ON not in data[device]:
-                data[device][CONF_ICON_ON] = None
-            if CONF_ENTITY_NAME not in data[device]:
-                data[device][CONF_ENTITY_NAME] = None
+        for device_key_original in data: # Rinomina 'device' a 'device_key_original' per evitare confusione
+            device_config = data[device_key_original] # Questa è la configurazione del dispositivo
+            device_config[CONF_ENTITIES] = {} # Mantiene la logica esistente
+            
+            # Gestione default e recupero WHO
+            # Lo schema interno per switch_schema ha già impostato il default a "1" o validato "1" o "4"
+            current_who = device_config.get(CONF_WHO) 
+            # Non dovrebbe essere None qui se lo schema base per switch lo ha gestito,
+            # ma per robustezza:
+            if current_who is None:
+                 # Se questo schema è usato anche da altre piattaforme che non definiscono WHO
+                 # potrebbe essere necessario un default più generico o un errore.
+                 # Per lo switch, lo schema interno dovrebbe averlo coperto.
+                 current_who = "1" # Fallback, ma idealmente lo schema di piattaforma lo imposta.
 
+
+            # Logica per CONF_WHERE e generazione _new_key
+            if CONF_WHERE in device_config:
+                where_value = device_config[CONF_WHERE]
+                bus_interface_value = device_config.get(CONF_BUS_INTERFACE)
+
+                if current_who == "1":
+                    # Validazione WHERE per WHO=1 (luci/attuatori standard)
+                    validated_where = Any(
+                        General(), Area(), Group(), PointToPoint(),
+                        msg=f"Invalid <WHERE> '{where_value}' for WHO=1 for device '{device_key_original}'"
+                    )(where_value)
+                    device_config[CONF_WHERE] = validated_where
+                    _new_key = (
+                        f"{current_who}-{validated_where}#4#{bus_interface_value}"
+                        if bus_interface_value is not None
+                        else f"{current_who}-{validated_where}"
+                    )
+                elif current_who == "4":
+                    # Validazione WHERE per WHO=4 (attuatori termo, es. scaldasalviette)
+                    validated_where = ZoneActuatorWhere(
+                        msg=f"Invalid <WHERE> '{where_value}' for WHO=4 (thermo actuator) for device '{device_key_original}'. Expecting Z#N format."
+                    )(where_value)
+                    device_config[CONF_WHERE] = validated_where
+                    # Per WHO=4 con WHERE=Z#N, il bus_interface non è usato nella chiave o nel comando.
+                    if bus_interface_value is not None:
+                        # Potresti voler generare un avviso o un errore se bus_interface è specificato per WHO=4
+                        pass # Ignoralo per ora o logga un warning
+                    _new_key = f"{current_who}-{validated_where}"
+                else:
+                    # SeCONF_WHO può essere diverso da 1 o 4 per altri tipi di device che usano questo schema generico.
+                    # Per lo switch, lo schema interno ha già limitato a "1" o "4".
+                    # Questa condizione è una sicurezza aggiuntiva.
+                    raise Invalid(f"Unsupported WHO value '{current_who}' for device '{device_key_original}' when CONF_WHERE is present.")
+
+                _rekeyed_data[_new_key] = device_config
+
+            elif CONF_ZONE in device_config: # Logica esistente per climate
+                # Questa parte gestisce principalmente le entità CLIMATE
+                # Assicurati che current_who sia corretto anche qui, se CONF_WHO è presente
+                # Per climate, WHO è tipicamente "4"
+                climate_who = device_config.get(CONF_WHO, "4") # Default a 4 per climate
+                zone_value = device_config[CONF_ZONE]
+                
+                # Genera una chiave iniziale per referenziare il dispositivo prima di modificare zone_value
+                # Se _new_key è già stato generato dalla logica CONF_WHERE, non sovrascriverlo
+                # a meno che non sia la logica specifica che vuoi.
+                # L'attuale codice non ha un _new_key definito prima di questo blocco if/elif.
+                initial_key_for_zone = f"{climate_who}-{zone_value}" # Chiave basata sulla zona originale
+
+                is_central = device_config.get(CONF_CENTRAL, False)
+                if is_central and zone_value != "#0":
+                    device_config[CONF_ZONE] = f"#0#{zone_value}"
+                # else: zone_value rimane com'è (es. "#0" o "1" per standalone)
+                
+                device_config[CONF_NAME] = (
+                    device_config.get(CONF_NAME) or # Usa il nome fornito se c'è
+                    ("Central unit" if device_config[CONF_ZONE].startswith("#0") and not device_config[CONF_ZONE].split("#")[-1] # Solo #0
+                     else f"Zone {device_config[CONF_ZONE].split('#')[-1]}") # Per #0#Z o Z
+                )
+                _rekeyed_data[initial_key_for_zone] = device_config # Usa la chiave basata sulla zona originale per coerenza
+
+            else:
+                # Se né CONF_WHERE né CONF_ZONE sono presenti, come generiamo la chiave?
+                # Questo potrebbe indicare un errore di configurazione a monte o la necessità
+                # di una chiave di default o un errore. Per ora, copiamo la config con la sua chiave originale.
+                _rekeyed_data[device_key_original] = device_config
+
+
+            # Impostazione dei default comuni, dopo la re-keying
+            # È meglio applicare i default alla device_config che andrà in _rekeyed_data[_new_key]
+            # o _rekeyed_data[initial_key_for_zone]
+            target_config_for_defaults = _rekeyed_data.get(_new_key if CONF_WHERE in device_config else initial_key_for_zone if CONF_ZONE in device_config else device_key_original)
+            if target_config_for_defaults:
+                 if CONF_DEVICE_MODEL not in target_config_for_defaults:
+                    target_config_for_defaults[CONF_DEVICE_MODEL] = None
+                 if CONF_ICON not in target_config_for_defaults:
+                    target_config_for_defaults[CONF_ICON] = None
+                 if CONF_ICON_ON not in target_config_for_defaults:
+                    target_config_for_defaults[CONF_ICON_ON] = None
+                 if CONF_ENTITY_NAME not in target_config_for_defaults:
+                    target_config_for_defaults[CONF_ENTITY_NAME] = None
+            
         return _rekeyed_data
 
 
@@ -307,10 +408,9 @@ light_schema = MyHomeDeviceSchema(
 switch_schema = MyHomeDeviceSchema(
     {
         Required(str): {
-            Optional(CONF_WHO, default="1"): "1",
-            Required(CONF_WHERE): All(
-                Coerce(str), Any(General(), Area(), Group(), PointToPoint(), msg="Invalid <WHERE>, expecting a valid General, Area, Group or Point-to-Point <WHERE>")
-            ),
+            # Permetti WHO "1" (luci/attuatori generici) o "4" (attuatori termo)
+            Optional(CONF_WHO, default="1"): In(["1", "4"]),
+            Required(CONF_WHERE): Coerce(str),  # Validazione più specifica in MyHomeDeviceSchema
             Optional(CONF_BUS_INTERFACE): All(Coerce(str), BusInterface()),
             Required(CONF_NAME): str,
             Optional(CONF_ENTITY_NAME): str,
