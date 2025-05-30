@@ -351,7 +351,7 @@ switch_schema = MyHomeDeviceSchema(
             # Permetti WHO "1" (luci/attuatori generici) o "4" (termoarredo/attuatore riscaldamento)
             Optional(CONF_WHO, default="1"): In(["1", "4"]),
             Required(CONF_WHERE): All(
-                Coerce(str), Any(General(), Area(), Group(), PointToPoint(), ActuatorWhere(), msg="Invalid <WHERE>, expecting a valid General, Area, Group, Point-to-Point, or Actuator (Z#N) <WHERE>")
+                Coerce(str), Any(General(), Area(), Group(), PointToPoint(), msg="Invalid <WHERE>, expecting a valid General, Area, Group, Point-to-Point, or Actuator <WHERE>")
             ),
             # Bus interface non si applica a WHO=4 per questo scenario, ma lo schema lo permette opzionalmente.
             # La validazione in MyHomeDeviceSchema.__call__ può verificare la sua assenza per WHO=4.

@@ -248,7 +248,7 @@ class MyHomeActuatorSwitch(MyHOMEEntity, SwitchEntity):
         icon_on: str,        # Icona acceso
         device_id: str,      # Usato per l'object_id di HA
         who: str,
-        where: str,          # Formato atteso: Z#N, es. "9#1"
+        where: str,          # Formato atteso: ZN, es. "91"
         device_class: str,   # "switch" o "outlet"
         manufacturer: str,
         model: str,
@@ -260,7 +260,7 @@ class MyHomeActuatorSwitch(MyHOMEEntity, SwitchEntity):
             platform=PLATFORM, # Dominio SWITCH
             device_id=device_id, # Usato per object_id
             who=who,
-            where=where, # Qui WHERE è Z#N
+            where=where, # Qui WHERE è ZN
             manufacturer=manufacturer,
             model=model,
             gateway=gateway,
@@ -270,7 +270,7 @@ class MyHomeActuatorSwitch(MyHOMEEntity, SwitchEntity):
         
         # Non c'è _full_where con interfaccia per questo tipo
         # self._full_where = where # Usiamo direttamente self._where ereditato
-
+        self._full_where = f"{self._where}#1" 
         self._attr_device_class = SwitchDeviceClass.OUTLET if device_class and device_class.lower() == "outlet" else SwitchDeviceClass.SWITCH
         
         self._on_icon = icon_on
@@ -332,6 +332,10 @@ class MyHomeActuatorSwitch(MyHOMEEntity, SwitchEntity):
 
     def handle_event(self, message: OWNHeatingEvent) -> None:
         """Handle an event message from the gateway for WHO=4."""
+        LOGGER.info(
+        f"{self.name} (Termoarredo) received event: WHO={message.who}, WHERE={message.where}, "
+        f"DIM={message.dimension}, VALUE={message._dimension_value}, RAW={message._raw}"
+    )
         # La classe base MyHOMEEntity dovrebbe aver già filtrato per unique_id (who-where)
         
         # Verifica che sia un evento di stato per un attuatore (Dimensione 20)
